@@ -1,57 +1,68 @@
-import { db } from "@/src/db";
-import { tasks } from "@/src/db/schema";
-import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+
+import {
+  malformedJsonResponse,
+  readJsonBody,
+  validationErrorResponse,
+} from "@/src/lib/api-errors";
+import { deleteTask, updateTask } from "@/src/features/tasks/service";
+import { parseTaskId, updateTaskSchema } from "@/src/features/tasks/validation";
 
 export const dynamic = "force-dynamic";
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+type TaskRouteContext = {
+  params: Promise<{ id: string }>;
+};
+
+async function getTaskId({ params }: TaskRouteContext): Promise<number | null> {
   const { id } = await params;
-  const taskId = Number(id);
 
-  if (!Number.isFinite(taskId)) {
-    return NextResponse.json({ error: "Invalid id." }, { status: 400 });
+  return parseTaskId(id);
+}
+
+export async function PATCH(request: NextRequest, context: TaskRouteContext) {
+  const taskId = await getTaskId(context);
+
+  if (!taskId) {
+    return NextResponse.json({ error: "Invalid task id." }, { status: 400 });
   }
 
-  const body = await req.json().catch(() => ({}));
-  const patch: Partial<{ title: string; completed: boolean }> = {};
-  if (typeof body.completed === "boolean") patch.completed = body.completed;
-  if (typeof body.title === "string" && body.title.trim()) {
-    patch.title = body.title.trim();
+  const body = await readJsonBody(request);
+
+  if (!body) {
+    return malformedJsonResponse();
   }
 
-  const [updated] = await db
-    .update(tasks)
-    .set(patch)
-    .where(eq(tasks.id, taskId))
-    .returning();
+  const result = updateTaskSchema.safeParse(body.data);
+
+  if (!result.success) {
+    return validationErrorResponse(result.error);
+  }
+
+  const updated = await updateTask(taskId, result.data);
 
   if (!updated) {
     return NextResponse.json({ error: "Task not found." }, { status: 404 });
   }
+
   return NextResponse.json(updated);
 }
 
 export async function DELETE(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  _request: NextRequest,
+  context: TaskRouteContext,
 ) {
-  const { id } = await params;
-  const taskId = Number(id);
-  if (!Number.isFinite(taskId)) {
-    return NextResponse.json({ error: "Invalid id." }, { status: 400 });
+  const taskId = await getTaskId(context);
+
+  if (!taskId) {
+    return NextResponse.json({ error: "Invalid task id." }, { status: 400 });
   }
 
-  const [deleted] = await db
-    .delete(tasks)
-    .where(eq(tasks.id, taskId))
-    .returning();
+  const deleted = await deleteTask(taskId);
 
   if (!deleted) {
     return NextResponse.json({ error: "Task not found." }, { status: 404 });
   }
+
   return NextResponse.json(deleted);
 }
