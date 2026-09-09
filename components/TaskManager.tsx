@@ -1,24 +1,53 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { type FormEvent, useEffect, useRef, useState } from "react";
+
 import type { Task } from "@/src/db/schema";
-import Link from "next/link";
+import {
+  TASK_TITLE_MAX_LENGTH,
+  taskTitleSchema,
+} from "@/src/features/tasks/validation";
 
 type Props = {
   initialTasks: Task[];
 };
 
+function getTitleError(value: string): string | null {
+  const result = taskTitleSchema.safeParse(value);
+
+  return result.success
+    ? null
+    : (result.error.issues[0]?.message ?? "Enter a valid task title.");
+}
+
+async function getApiErrorMessage(response: Response, fallback: string) {
+  const payload: unknown = await response.json().catch(() => null);
+
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "error" in payload &&
+    typeof payload.error === "string"
+  ) {
+    return payload.error;
+  }
+
+  return fallback;
+}
+
 export default function TaskManager({ initialTasks }: Props) {
   const router = useRouter();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [title, setTitle] = useState("");
+  const [titleError, setTitleError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Edit state
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [editTitleError, setEditTitleError] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
 
@@ -40,49 +69,69 @@ export default function TaskManager({ initialTasks }: Props) {
     }
   }, [editingId]);
 
-  useEffect(() => {
-    setTasks(initialTasks);
-  }, [initialTasks]);
-
   function startEditing(task: Task) {
     setEditingId(task.id);
     setEditTitle(task.title);
+    setEditTitleError(null);
   }
 
   function cancelEditing() {
     setEditingId(null);
     setEditTitle("");
+    setEditTitleError(null);
   }
 
   async function saveEdit(id: number) {
-    const trimmed = editTitle.trim();
-    if (!trimmed) return;
+    const parsedTitle = taskTitleSchema.safeParse(editTitle);
+
+    if (!parsedTitle.success) {
+      setEditTitleError(getTitleError(editTitle));
+      return;
+    }
+
+    const title = parsedTitle.data;
 
     // Skip network request if unchanged
-    const currentTask = tasks.find((t) => t.id === id);
-    if (currentTask && currentTask.title === trimmed) {
+    const currentTask = tasks.find((task) => task.id === id);
+    if (currentTask && currentTask.title === title) {
       cancelEditing();
       return;
     }
 
     setSavingEdit(true);
+    setEditTitleError(null);
     setError(null);
 
     // Optimistic update
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, title: trimmed } : t)),
+    setTasks((previousTasks) =>
+      previousTasks.map((task) =>
+        task.id === id ? { ...task, title } : task,
+      ),
     );
 
     try {
-      const res = await fetch(`/api/tasks/${id}`, {
+      const response = await fetch(`/api/tasks/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: trimmed }),
+        body: JSON.stringify({ title }),
       });
-      if (!res.ok) throw new Error("Could not update task.");
+
+      if (!response.ok) {
+        throw new Error(
+          await getApiErrorMessage(response, "Could not update task."),
+        );
+      }
+
       setEditingId(null);
       router.refresh();
     } catch (err) {
+      if (currentTask) {
+        setTasks((previousTasks) =>
+          previousTasks.map((task) =>
+            task.id === id ? currentTask : task,
+          ),
+        );
+      }
       setError(err instanceof Error ? err.message : "Something went wrong.");
       router.refresh();
     } finally {
@@ -90,22 +139,39 @@ export default function TaskManager({ initialTasks }: Props) {
     }
   }
 
-  async function addTask(e: FormEvent) {
-    e.preventDefault();
-    const value = title.trim();
-    if (!value || busy) return;
+  async function addTask(event: FormEvent) {
+    event.preventDefault();
+
+    if (busy) {
+      return;
+    }
+
+    const parsedTitle = taskTitleSchema.safeParse(title);
+
+    if (!parsedTitle.success) {
+      setTitleError(getTitleError(title));
+      return;
+    }
 
     setBusy(true);
+    setTitleError(null);
     setError(null);
+
     try {
-      const res = await fetch("/api/tasks", {
+      const response = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: value }),
+        body: JSON.stringify({ title: parsedTitle.data }),
       });
-      if (!res.ok) throw new Error("Could not add task.");
-      const created: Task = await res.json();
-      setTasks((prev) => [created, ...prev]);
+
+      if (!response.ok) {
+        throw new Error(
+          await getApiErrorMessage(response, "Could not add task."),
+        );
+      }
+
+      const created: Task = await response.json();
+      setTasks((previousTasks) => [created, ...previousTasks]);
       setTitle("");
       router.refresh();
     } catch (err) {
@@ -116,32 +182,73 @@ export default function TaskManager({ initialTasks }: Props) {
   }
 
   async function toggle(id: number, completed: boolean) {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, completed } : t)),
+    const previousTask = tasks.find((task) => task.id === id);
+
+    setTasks((previousTasks) =>
+      previousTasks.map((task) =>
+        task.id === id ? { ...task, completed } : task,
+      ),
     );
     setError(null);
+
     try {
-      const res = await fetch(`/api/tasks/${id}`, {
+      const response = await fetch(`/api/tasks/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ completed }),
       });
-      if (!res.ok) throw new Error("Could not update task.");
+
+      if (!response.ok) {
+        throw new Error(
+          await getApiErrorMessage(response, "Could not update task."),
+        );
+      }
+
       router.refresh();
     } catch (err) {
+      if (previousTask) {
+        setTasks((previousTasks) =>
+          previousTasks.map((task) =>
+            task.id === id ? previousTask : task,
+          ),
+        );
+      }
       setError(err instanceof Error ? err.message : "Something went wrong.");
       router.refresh();
     }
   }
 
   async function remove(id: number) {
-    setTasks((prev) => prev.filter((t) => t.id !== id));
+    const deletedTaskIndex = tasks.findIndex((task) => task.id === id);
+    const deletedTask = tasks[deletedTaskIndex];
+
+    setTasks((previousTasks) =>
+      previousTasks.filter((task) => task.id !== id),
+    );
     setError(null);
+
     try {
-      const res = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Could not delete task.");
+      const response = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+
+      if (!response.ok) {
+        throw new Error(
+          await getApiErrorMessage(response, "Could not delete task."),
+        );
+      }
+
       router.refresh();
     } catch (err) {
+      if (deletedTask) {
+        setTasks((previousTasks) => {
+          if (previousTasks.some((task) => task.id === id)) {
+            return previousTasks;
+          }
+
+          const restoredTasks = [...previousTasks];
+          restoredTasks.splice(deletedTaskIndex, 0, deletedTask);
+          return restoredTasks;
+        });
+      }
       setError(err instanceof Error ? err.message : "Something went wrong.");
       router.refresh();
     }
@@ -152,43 +259,82 @@ export default function TaskManager({ initialTasks }: Props) {
 
   return (
     <div className="w-full max-w-2xl mx-auto space-y-6">
-      {/* Unified Input Bar */}
-      <form
-        onSubmit={addTask}
-        className="group relative flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/80 p-1.5 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] backdrop-blur-md transition-all focus-within:border-slate-400 focus-within:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.08)]"
-      >
-        <div className="pointer-events-none pl-3 text-slate-400">
-          <svg
-            className="h-4 w-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth="2.5"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-        </div>
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="What needs to be done?"
-          className="flex-1 bg-transparent px-2 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
-        />
-        <button
-          type="submit"
-          disabled={busy || !title.trim()}
-          className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-xs font-medium tracking-wide text-white transition-all hover:bg-slate-800 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+      {/* New task form */}
+      <div className="w-full space-y-1.5">
+        <form
+          noValidate
+          onSubmit={addTask}
+          className={`group relative flex items-center gap-2 rounded-2xl border bg-white/80 p-1.5 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] backdrop-blur-md transition-all focus-within:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.08)] ${
+            titleError
+              ? "border-rose-300 focus-within:border-rose-400"
+              : "border-slate-200/80 focus-within:border-slate-400"
+          }`}
         >
-          {busy ? "Adding…" : "Add task"}
-        </button>
-      </form>
+          <div className="pointer-events-none pl-3 text-slate-400">
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth="2.5"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+          </div>
+          <label className="sr-only" htmlFor="new-task-title">
+            Task title
+          </label>
+          <input
+            id="new-task-title"
+            value={title}
+            onChange={(event) => {
+              const nextTitle = event.target.value;
+              setTitle(nextTitle);
+
+              if (titleError) {
+                setTitleError(getTitleError(nextTitle));
+              }
+            }}
+            onBlur={() => {
+              if (title) {
+                setTitleError(getTitleError(title));
+              }
+            }}
+            maxLength={TASK_TITLE_MAX_LENGTH}
+            aria-invalid={Boolean(titleError)}
+            aria-describedby={titleError ? "new-task-title-error" : undefined}
+            placeholder="What needs to be done?"
+            className="flex-1 bg-transparent px-2 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={busy}
+            className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-xs font-medium tracking-wide text-white transition-all hover:bg-slate-800 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+          >
+            {busy ? "Adding…" : "Add task"}
+          </button>
+        </form>
+
+        {titleError && (
+          <p
+            id="new-task-title-error"
+            role="alert"
+            className="px-2 text-xs font-medium text-rose-600"
+          >
+            {titleError}
+          </p>
+        )}
+      </div>
 
       {error && (
-        <div className="rounded-xl border border-rose-100 bg-rose-50/70 px-4 py-2.5 text-xs font-medium text-rose-600 backdrop-blur-sm">
+        <div
+          role="alert"
+          className="rounded-xl border border-rose-100 bg-rose-50/70 px-4 py-2.5 text-xs font-medium text-rose-600 backdrop-blur-sm"
+        >
           {error}
         </div>
       )}
@@ -272,22 +418,46 @@ export default function TaskManager({ initialTasks }: Props) {
 
               {/* Title OR Inline Edit Input */}
               {isEditing ? (
-                <div className="flex flex-1 items-center gap-1.5">
+                <div
+                  className={`relative flex flex-1 items-center gap-1.5 ${
+                    editTitleError ? "pb-5" : ""
+                  }`}
+                >
+                  <label className="sr-only" htmlFor={`task-title-${task.id}`}>
+                    Task title
+                  </label>
                   <input
+                    id={`task-title-${task.id}`}
                     ref={editInputRef}
                     value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") saveEdit(task.id);
-                      if (e.key === "Escape") cancelEditing();
+                    onChange={(event) => {
+                      const nextTitle = event.target.value;
+                      setEditTitle(nextTitle);
+
+                      if (editTitleError) {
+                        setEditTitleError(getTitleError(nextTitle));
+                      }
                     }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") saveEdit(task.id);
+                      if (event.key === "Escape") cancelEditing();
+                    }}
+                    maxLength={TASK_TITLE_MAX_LENGTH}
+                    aria-invalid={Boolean(editTitleError)}
+                    aria-describedby={
+                      editTitleError ? `task-title-error-${task.id}` : undefined
+                    }
                     disabled={savingEdit}
-                    className="flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-sm text-slate-800 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
+                    className={`flex-1 rounded-lg border bg-white px-2.5 py-1 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none ${
+                      editTitleError
+                        ? "border-rose-300 focus:border-rose-400"
+                        : "border-slate-200 focus:border-slate-400"
+                    }`}
                   />
                   {/* Save Edit Button */}
                   <button
                     onClick={() => saveEdit(task.id)}
-                    disabled={savingEdit || !editTitle.trim()}
+                    disabled={savingEdit}
                     aria-label="Save task"
                     className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50 active:scale-95 disabled:opacity-40"
                   >
@@ -326,6 +496,15 @@ export default function TaskManager({ initialTasks }: Props) {
                       />
                     </svg>
                   </button>
+                  {editTitleError && (
+                    <p
+                      id={`task-title-error-${task.id}`}
+                      role="alert"
+                      className="absolute bottom-0 left-0 text-[11px] font-medium text-rose-600"
+                    >
+                      {editTitleError}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <>
