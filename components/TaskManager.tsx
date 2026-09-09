@@ -1,13 +1,39 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Task } from "@/src/db/schema";
-import Link from "next/link";
+
+import {
+  TASK_TITLE_MAX_LENGTH,
+  taskTitleSchema,
+} from "@/src/features/tasks/validation";
 
 type Props = {
   initialTasks: Task[];
 };
+
+function getTitleError(value: string): string | null {
+  const result = taskTitleSchema.safeParse(value);
+  return result.success
+    ? null
+    : (result.error.issues[0]?.message ?? "Enter a valid task title.");
+}
+
+async function getApiErrorMessage(response: Response, fallback: string) {
+  const payload: unknown = await response.json().catch(() => null);
+
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "error" in payload &&
+    typeof payload.error === "string"
+  ) {
+    return payload.error;
+  }
+
+  return fallback;
+}
 
 export default function TaskManager({ initialTasks }: Props) {
   const router = useRouter();
@@ -15,11 +41,13 @@ export default function TaskManager({ initialTasks }: Props) {
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [titleError, setTitleError] = useState<string | null>(null);
 
   // Edit state
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [editTitleError, setEditTitleError] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -40,49 +68,64 @@ export default function TaskManager({ initialTasks }: Props) {
     }
   }, [editingId]);
 
-  useEffect(() => {
-    setTasks(initialTasks);
-  }, [initialTasks]);
-
   function startEditing(task: Task) {
     setEditingId(task.id);
     setEditTitle(task.title);
+    setEditTitleError(null);
   }
 
   function cancelEditing() {
     setEditingId(null);
     setEditTitle("");
+    setEditTitleError(null);
   }
 
   async function saveEdit(id: number) {
-    const trimmed = editTitle.trim();
-    if (!trimmed) return;
+    // const trimmed = editTitle.trim();
+    // if (!trimmed) return;
+    const parsedTitle = taskTitleSchema.safeParse(editTitle);
+    if (!parsedTitle.success) {
+      setEditTitleError(getTitleError(editTitle));
+      return;
+    }
+
+    const title = parsedTitle.data;
 
     // Skip network request if unchanged
-    const currentTask = tasks.find((t) => t.id === id);
-    if (currentTask && currentTask.title === trimmed) {
+    const currentTask = tasks.find((task) => task.id === id);
+    if (currentTask && currentTask.title === title) {
       cancelEditing();
       return;
     }
 
     setSavingEdit(true);
+    setEditTitleError(null);
     setError(null);
 
     // Optimistic update
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, title: trimmed } : t)),
+    setTasks((previousTasks) =>
+      previousTasks.map((task) => (task.id === id ? { ...task, title } : task)),
     );
 
     try {
-      const res = await fetch(`/api/tasks/${id}`, {
+      const response = await fetch(`/api/tasks/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: trimmed }),
+        body: JSON.stringify({ title }),
       });
-      if (!res.ok) throw new Error("Could not update task.");
+      if (!response.ok) {
+        throw new Error(
+          await getApiErrorMessage(response, "Could not update task."),
+        );
+      }
       setEditingId(null);
       router.refresh();
     } catch (err) {
+      if (currentTask) {
+        setTasks((previousTasks) =>
+          previousTasks.map((task) => (task.id === id ? currentTask : task)),
+        );
+      }
       setError(err instanceof Error ? err.message : "Something went wrong.");
       router.refresh();
     } finally {
@@ -92,20 +135,34 @@ export default function TaskManager({ initialTasks }: Props) {
 
   async function addTask(e: FormEvent) {
     e.preventDefault();
-    const value = title.trim();
-    if (!value || busy) return;
+    if (busy) {
+      return;
+    }
+
+    const parsedTitle = taskTitleSchema.safeParse(title);
+
+    if (!parsedTitle.success) {
+      setTitleError(getTitleError(title));
+      return;
+    }
 
     setBusy(true);
+    setTitleError(null);
     setError(null);
+
     try {
-      const res = await fetch("/api/tasks", {
+      const response = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: value }),
+        body: JSON.stringify({ title: parsedTitle.data }),
       });
-      if (!res.ok) throw new Error("Could not add task.");
-      const created: Task = await res.json();
-      setTasks((prev) => [created, ...prev]);
+      if (!response.ok) {
+        throw new Error(
+          await getApiErrorMessage(response, "Could not add task."),
+        );
+      }
+      const created: Task = await response.json();
+      setTasks((previousTasks) => [created, ...previousTasks]);
       setTitle("");
       router.refresh();
     } catch (err) {
@@ -116,32 +173,62 @@ export default function TaskManager({ initialTasks }: Props) {
   }
 
   async function toggle(id: number, completed: boolean) {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, completed } : t)),
+    const previousTask = tasks.find((tasks) => tasks.id === id);
+    setTasks((previousTasks) =>
+      previousTasks.map((task) =>
+        task.id === id ? { ...task, completed } : task,
+      ),
     );
     setError(null);
     try {
-      const res = await fetch(`/api/tasks/${id}`, {
+      const response = await fetch(`/api/tasks/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ completed }),
       });
-      if (!res.ok) throw new Error("Could not update task.");
+      if (!response.ok) {
+        throw new Error(
+          await getApiErrorMessage(response, "Could not update task."),
+        );
+      }
       router.refresh();
     } catch (err) {
+      if (previousTask) {
+        setTasks((previousTasks) =>
+          previousTasks.map((task) => (task.id === id ? previousTask : task)),
+        );
+      }
       setError(err instanceof Error ? err.message : "Something went wrong.");
       router.refresh();
     }
   }
 
   async function remove(id: number) {
-    setTasks((prev) => prev.filter((t) => t.id !== id));
+    const deletedTaskIndex = tasks.findIndex((task) => task.id === id);
+    const deletedTask = tasks[deletedTaskIndex];
+    setTasks((previousTasks) => previousTasks.filter((task) => task.id !== id));
     setError(null);
     try {
-      const res = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Could not delete task.");
+      const response = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+
+      if (!response.ok) {
+        throw new Error(
+          await getApiErrorMessage(response, "Could not delete task."),
+        );
+      }
       router.refresh();
     } catch (err) {
+      if (deletedTask) {
+        setTasks((previousTasks) => {
+          if (previousTasks.some((task) => task.id === id)) {
+            return previousTasks;
+          }
+
+          const restoredTasks = [...previousTasks];
+          restoredTasks.splice(deletedTaskIndex, 0, deletedTask);
+          return restoredTasks;
+        });
+      }
       setError(err instanceof Error ? err.message : "Something went wrong.");
       router.refresh();
     }
@@ -373,7 +460,6 @@ export default function TaskManager({ initialTasks }: Props) {
                         />
                         <path
                           strokeLinecap="round"
-                          
                           strokeLinejoin="round"
                           d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
                         />
