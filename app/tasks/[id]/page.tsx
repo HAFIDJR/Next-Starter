@@ -1,20 +1,17 @@
-import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { getTaskById } from "@/app/api/tasks/route";
+import { notFound } from "next/navigation";
+
 import TaskDetailActions from "./TaskDetailActions";
+import { getTaskById } from "@/src/features/tasks/service";
+import { parseTaskId } from "@/src/features/tasks/validation";
 
 type Props = {
   params: Promise<{ id: string }>;
 };
 
-function parseId(raw: string): number | null {
-  const id = Number(raw);
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
-
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
-  const taskId = parseId(id);
+  const taskId = parseTaskId(id);
   const task = taskId ? await getTaskById(taskId) : null;
 
   return { title: task ? `Task: ${task.title}` : "Task not found" };
@@ -22,17 +19,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function TaskDetailPage({ params }: Props) {
   const { id } = await params;
-  const taskId = parseId(id);
+  const taskId = parseTaskId(id);
 
-  if (!taskId) notFound();
+  if (!taskId) {
+    notFound();
+  }
 
   const task = await getTaskById(taskId);
 
-  if (!task) notFound();
+  if (!task) {
+    notFound();
+  }
 
   return (
     <main className="mx-auto w-full max-w-2xl space-y-6 p-6">
-      {/* Server-rendered detail */}
       <div className="rounded-2xl border border-slate-100 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
         <div className="flex items-start justify-between gap-4">
           <h1
@@ -66,7 +66,6 @@ export default async function TaskDetailPage({ params }: Props) {
           </div>
         </dl>
       </div>
-      {/* Client Component interleaved into the Server Component tree */}
       <TaskDetailActions task={task} />
     </main>
   );

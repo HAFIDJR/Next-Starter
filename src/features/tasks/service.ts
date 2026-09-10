@@ -4,7 +4,7 @@ import { tasks, type Task } from "@/src/db/schema";
 
 import type { CreateTaskInput, UpdateTaskInput } from "./validation";
 
-export async function listTaksk(): Promise<Task[]> {
+export async function listTasks(): Promise<Task[]> {
   return db.select().from(tasks).orderBy(desc(tasks.createdAt));
 }
 
@@ -44,7 +44,10 @@ export async function updateTask(
 }
 
 export async function deleteTask(id: number): Promise<Task | null> {
-  const [deleted] = await db.delete(tasks).where(eq(tasks.id, id)).returning();
+  const [deleted] = await db
+    .delete(tasks)
+    .where(eq(tasks.id, id))
+    .returning();
 
   return deleted ?? null;
 }

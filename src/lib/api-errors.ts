@@ -30,4 +30,12 @@ export function validationErrorResponse(error: ZodError) {
     errors[field].push(issue.message);
     return errors;
   }, {});
+
+  return NextResponse.json(
+    {
+      error: "Validation failed.",
+      fieldErrors,
+    },
+    { status: 400 },
+  );
 }

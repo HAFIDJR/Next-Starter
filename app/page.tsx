@@ -1,12 +1,13 @@
-import { db } from "@/src/db";
-import { tasks } from "@/src/db/schema";
-import { desc } from "drizzle-orm";
 import TaskManager from "@/components/TaskManager";
+import { listTasks } from "@/src/features/tasks/service";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const allTasks = await db.select().from(tasks).orderBy(desc(tasks.createdAt));
+  const allTasks = await listTasks();
+  const taskListKey = allTasks
+    .map((task) => `${task.id}:${task.title}:${task.completed}:${task.createdAt}`)
+    .join("|");
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col items-center px-4 py-10 sm:px-6">
@@ -24,7 +25,7 @@ export default async function HomePage() {
         </p>
       </section>
 
-      <TaskManager initialTasks={allTasks} />
+      <TaskManager key={taskListKey} initialTasks={allTasks} />
     </main>
   );
 }

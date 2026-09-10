@@ -1,40 +1,37 @@
-import { db } from "@/src/db";
-import { type Task, tasks } from "@/src/db/schema";
-import { desc ,eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+
+import {
+  malformedJsonResponse,
+  readJsonBody,
+  validationErrorResponse,
+} from "@/src/lib/api-errors";
+import { createTask, listTasks } from "@/src/features/tasks/service";
+import { createTaskSchema } from "@/src/features/tasks/validation";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/tasks -> list all tasks
 export async function GET() {
-  const all = await db.select().from(tasks).orderBy(desc(tasks.createdAt));
-  return NextResponse.json(all);
-}
+  const allTasks = await listTasks();
 
-//GET /api/tasks/:id -> get detail list
-
-export async function getTaskById (id: number) : Promise <Task | null>{
-  const [task] = await db.select().from(tasks).where(eq(tasks.id , id)).limit(1);
-  return task ?? null
+  return NextResponse.json(allTasks);
 }
 
 // POST /api/tasks -> create a task
-export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const title =
-    typeof body?.title === "string" ? body.title.trim() : "";
+export async function POST(request: NextRequest) {
+  const body = await readJsonBody(request);
 
-  if (!title) {
-    return NextResponse.json(
-      { error: "Title is required." },
-      { status: 400 }
-    );
+  if (!body) {
+    return malformedJsonResponse();
   }
 
-  const [created] = await db
-    .insert(tasks)
-    .values({ title, completed: Boolean(body.completed) })
-    .returning();
+  const result = createTaskSchema.safeParse(body.data);
+
+  if (!result.success) {
+    return validationErrorResponse(result.error);
+  }
+
+  const created = await createTask(result.data);
 
   return NextResponse.json(created, { status: 201 });
 }
