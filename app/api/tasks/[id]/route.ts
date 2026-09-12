@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  authenticationRequiredResponse,
   malformedJsonResponse,
   readJsonBody,
   validationErrorResponse,
 } from "@/src/lib/api-errors";
-import { deleteTask, updateTask } from "@/src/features/tasks/service";
+import { getCurrentUser } from "@/src/features/auth/session";
+
+import {
+  deleteTaskForUser,
+  updateTaskForUser,
+} from "@/src/features/tasks/service";
 import { parseTaskId, updateTaskSchema } from "@/src/features/tasks/validation";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +27,12 @@ async function getTaskId({ params }: TaskRouteContext): Promise<number | null> {
 }
 
 export async function PATCH(request: NextRequest, context: TaskRouteContext) {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    return authenticationRequiredResponse();
+  }
+
   const taskId = await getTaskId(context);
 
   if (!taskId) {
@@ -39,7 +51,7 @@ export async function PATCH(request: NextRequest, context: TaskRouteContext) {
     return validationErrorResponse(result.error);
   }
 
-  const updated = await updateTask(taskId, result.data);
+  const updated = await updateTaskForUser(taskId, user.id, result.data);
 
   if (!updated) {
     return NextResponse.json({ error: "Task not found." }, { status: 404 });
@@ -48,17 +60,20 @@ export async function PATCH(request: NextRequest, context: TaskRouteContext) {
   return NextResponse.json(updated);
 }
 
-export async function DELETE(
-  _request: NextRequest,
-  context: TaskRouteContext,
-) {
+export async function DELETE(_request: NextRequest, context: TaskRouteContext) {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    return authenticationRequiredResponse();
+  }
+
   const taskId = await getTaskId(context);
 
   if (!taskId) {
     return NextResponse.json({ error: "Invalid task id." }, { status: 400 });
   }
 
-  const deleted = await deleteTask(taskId);
+  const deleted = await deleteTaskForUser(taskId, user.id);
 
   if (!deleted) {
     return NextResponse.json({ error: "Task not found." }, { status: 404 });

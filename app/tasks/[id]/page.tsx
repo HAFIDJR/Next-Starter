@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import TaskDetailActions from "./TaskDetailActions";
+import { getCurrentUser } from "@/src/features/auth/session";
+import { requireCurrentUser } from "@/src/features/auth/require-user";
+import { getTaskForUser } from "@/src/features/tasks/service";
 import { getTaskById } from "@/src/features/tasks/service";
 import { parseTaskId } from "@/src/features/tasks/validation";
 
@@ -12,12 +15,14 @@ type Props = {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
   const taskId = parseTaskId(id);
-  const task = taskId ? await getTaskById(taskId) : null;
+  const user = await getCurrentUser();
+  const task = taskId && user ? await getTaskForUser(taskId, user.id) : null;
 
   return { title: task ? `Task: ${task.title}` : "Task not found" };
 }
 
 export default async function TaskDetailPage({ params }: Props) {
+  const user = await requireCurrentUser();
   const { id } = await params;
   const taskId = parseTaskId(id);
 
@@ -25,7 +30,7 @@ export default async function TaskDetailPage({ params }: Props) {
     notFound();
   }
 
-  const task = await getTaskById(taskId);
+  const task = await getTaskForUser(taskId,user.id);
 
   if (!task) {
     notFound();

@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import type { Task } from "@/src/db/schema";
+import type { TaskDto } from "@/src/features/tasks/types";
 
-export default function TaskDetailActions({ task }: { task: Task }) {
+export default function TaskDetailActions({ task }: { task: TaskDto }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -13,6 +13,13 @@ export async function readJsonBody(
   }
 }
 
+export function authenticationRequiredResponse() {
+  return NextResponse.json(
+    { error: "Authentication required." },
+    { status: 401 },
+  );
+}
+
 export function malformedJsonResponse() {
   return NextResponse.json(
     {

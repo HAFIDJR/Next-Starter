@@ -2,10 +2,13 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import "./globals.css";
+import LogoutButton from "@/components/LogoutButton";
+import { getCurrentUser } from "@/src/features/auth/session";
 
 export const metadata: Metadata = {
   title: "Tasks · Next.js App Router",
-  description: "A simple task manager built with the Next.js App Router, Drizzle, and PostgreSQL.",
+  description:
+    "A private task manager built with the Next.js App Router, Drizzle, and PostgreSQL.",
 };
 
 const navLinks = [
@@ -13,7 +16,12 @@ const navLinks = [
   { href: "/about", label: "About" },
 ];
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const user = await getCurrentUser();
   return (
     <html lang="en">
       <body className="min-h-screen bg-slate-100 text-slate-900 antialiased">
@@ -38,6 +46,17 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                   {link.label}
                 </Link>
               ))}
+
+              {user ? (
+                <LogoutButton email={user.email} />
+              ) : (
+                <Link
+                  href="/login"
+                  className="rounded-lg px-3 py-2 font-medium text-indigo-600 transition hover:bg-indigo-50 hover:text-indigo-700"
+                >
+                  Sign in
+                </Link>
+              )}
             </div>
           </nav>
         </header>

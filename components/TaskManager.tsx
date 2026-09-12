@@ -8,9 +8,10 @@ import {
   TASK_TITLE_MAX_LENGTH,
   taskTitleSchema,
 } from "@/src/features/tasks/validation";
+import { TaskDto } from "@/src/features/tasks/types";
 
 type Props = {
-  initialTasks: Task[];
+  initialTasks: TaskDto[];
 };
 
 function getTitleError(value: string): string | null {
@@ -38,7 +39,7 @@ async function getApiErrorMessage(response: Response, fallback: string) {
 
 export default function TaskManager({ initialTasks }: Props) {
   const router = useRouter();
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  const [tasks, setTasks] = useState<TaskDto[]>(initialTasks);
   const [title, setTitle] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -69,7 +70,7 @@ export default function TaskManager({ initialTasks }: Props) {
     }
   }, [editingId]);
 
-  function startEditing(task: Task) {
+  function startEditing(task: TaskDto) {
     setEditingId(task.id);
     setEditTitle(task.title);
     setEditTitleError(null);

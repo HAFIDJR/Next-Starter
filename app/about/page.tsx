@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "About · Taskly",
-  description: "Learn about this Next.js App Router starter.",
+  description: "Learn about this private Next.js App Router task manager.",
 };
 
 const stack = [
@@ -12,6 +12,7 @@ const stack = [
   },
   { name: "Drizzle ORM", role: "Typed database schema and queries" },
   { name: "PostgreSQL", role: "Relational data store for tasks" },
+  { name: "Zod", role: "Shared client and server validation" },
   { name: "Tailwind CSS", role: "Utility-first styling" },
 ];
 
@@ -19,18 +20,13 @@ export default function AboutPage() {
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col px-4 py-12 sm:px-6">
       <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
-        About this starter
+        About Taskly
       </h1>
       <p className="mt-4 text-base leading-relaxed text-slate-600">
-        Taskly demonstrates the idiomatic structure of a modern{" "}
-        <span className="font-semibold text-slate-900">Next.js App Router</span>{" "}
-        project. The home page is a Server Component that queries the database
-        directly, while interactive controls live in Client Components that talk
-        to typed Route Handlers under{" "}
-        <code className="rounded bg-slate-200 px-1.5 py-0.5 text-sm">
-          /api/tasks
-        </code>
-        .
+        Taskly is a private task manager built with the{" "}
+        <span className="font-semibold text-slate-900">Next.js App Router</span>
+        . Each task is attached to its signed-in owner, and protected routes
+        verify authorization before reading or changing task data.
       </p>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -47,8 +43,8 @@ export default function AboutPage() {
         ))}
       </div>
       <p className="mt-8 rounded-2xl bg-indigo-50 p-4 text-sm text-indigo-700">
-        ✨ Add tasks from the Tasks page to see data flow from the browser,
-        through an API route, into PostgreSQL — and back rendered by the server.
+        ✨ Sign in to create and manage tasks that are visible only to your
+        account.
       </p>
     </main>
   );
