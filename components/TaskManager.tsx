@@ -1,611 +1,570 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useRef, useState } from "react";
-
-import type { Task } from "@/src/db/schema";
 import {
-  TASK_TITLE_MAX_LENGTH,
-  taskTitleSchema,
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+import TaskFilters from "./TaskFilters";
+import TaskItem, { type TaskPatch } from "./TaskItem";
+import UndoToast, { type ToastState } from "./UndoToast";
+
+import { ApiError, deleteRequest, jsonRequest } from "@/src/lib/api-client";
+import { describeDue, parseDueText } from "@/src/features/tasks/due-date";
+import { UNDO_TOAST_DURATION_MS } from "@/src/features/tasks/constants";
+import type { TaskDto, TaskListFilters } from "@/src/features/tasks/types";
+import {
+  buildTaskListQuery,
+  createTaskSchema,
 } from "@/src/features/tasks/validation";
-import { TaskDto } from "@/src/features/tasks/types";
 
 type Props = {
   initialTasks: TaskDto[];
+  filters: TaskListFilters;
+  /** Viewer's zone, decided on the server so labels don't shift on hydration. */
+  timeZone: string;
+  /** Single instant shared by every due-date label in this render. */
+  now: Date;
+  trashCount: number;
 };
 
-function getTitleError(value: string): string | null {
-  const result = taskTitleSchema.safeParse(value);
-
-  return result.success
-    ? null
-    : (result.error.issues[0]?.message ?? "Enter a valid task title.");
-}
-
-async function getApiErrorMessage(response: Response, fallback: string) {
-  const payload: unknown = await response.json().catch(() => null);
-
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof payload.error === "string"
-  ) {
-    return payload.error;
+function messageFrom(error: unknown, fallback: string) {
+  if (error instanceof ApiError) {
+    return error.message;
   }
 
-  return fallback;
+  return error instanceof Error ? error.message : fallback;
 }
 
-export default function TaskManager({ initialTasks }: Props) {
+/** Cheap identity for a list snapshot: which rows, and how fresh each one is. */
+function signatureOf(tasks: TaskDto[]) {
+  return tasks.map((task) => `${task.id}:${task.updatedAt.getTime()}`).join("|");
+}
+
+export default function TaskManager({
+  initialTasks,
+  filters,
+  timeZone,
+  now,
+  trashCount,
+}: Props) {
   const router = useRouter();
   const [tasks, setTasks] = useState<TaskDto[]>(initialTasks);
-  const [title, setTitle] = useState("");
-  const [titleError, setTitleError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [editor, setEditor] = useState<{ taskId: number; viewKey: string } | null>(null);
+  const [savingId, setSavingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [toastPaused, setToastPaused] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const toastId = useRef(0);
 
-  // Edit state
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editTitleError, setEditTitleError] = useState<string | null>(null);
-  const [savingEdit, setSavingEdit] = useState(false);
-  const editInputRef = useRef<HTMLInputElement>(null);
+  const busy = pendingCount > 0;
+
+  // Which view we are in. Binding the open editor to it means switching filters
+  // closes the editor by derivation, not by an effect.
+  const viewKey = `${filters.q}::${filters.filter}::${filters.trash ? "trash" : "list"}`;
+  const editingId = editor?.viewKey === viewKey ? editor.taskId : null;
+
+  /*
+   * Adopt server data when it changes, instead of remounting the whole list.
+   * The previous version forced a remount with `key={taskListKey}`, which threw
+   * away edit state and any in-flight toast. Skipping the sync while a mutation
+   * is in flight is what makes optimistic updates survive a `router.refresh()`.
+   */
+  const signature = signatureOf(initialTasks);
+  const appliedSignature = useRef(signature);
 
   useEffect(() => {
-    if (!error) return;
+    if (pendingCount > 0) {
+      return;
+    }
 
-    const timer = setTimeout(() => {
-      setError(null);
-    }, 4000);
+    if (appliedSignature.current === signature) {
+      return;
+    }
+
+    appliedSignature.current = signature;
+    setTasks(initialTasks);
+  }, [signature, pendingCount, initialTasks]);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    const timer = setTimeout(() => setError(null), 4000);
 
     return () => clearTimeout(timer);
   }, [error]);
 
-  // Focus the edit input when entering edit mode
+  // A toast that expires is a decision to keep the deletion.
   useEffect(() => {
-    if (editingId !== null) {
-      editInputRef.current?.focus();
-      editInputRef.current?.select();
-    }
-  }, [editingId]);
-
-  function startEditing(task: TaskDto) {
-    setEditingId(task.id);
-    setEditTitle(task.title);
-    setEditTitleError(null);
-  }
-
-  function cancelEditing() {
-    setEditingId(null);
-    setEditTitle("");
-    setEditTitleError(null);
-  }
-
-  async function saveEdit(id: number) {
-    const parsedTitle = taskTitleSchema.safeParse(editTitle);
-
-    if (!parsedTitle.success) {
-      setEditTitleError(getTitleError(editTitle));
+    if (!toast) {
       return;
     }
 
-    const title = parsedTitle.data;
+    const timer = setTimeout(() => setToast(null), toast.durationMs);
 
-    // Skip network request if unchanged
-    const currentTask = tasks.find((task) => task.id === id);
-    if (currentTask && currentTask.title === title) {
-      cancelEditing();
-      return;
+    return () => clearTimeout(timer);
+  }, [toast, toastPaused]);
+
+  const begin = useCallback(() => setPendingCount((count) => count + 1), []);
+  const end = useCallback(() => setPendingCount((count) => Math.max(0, count - 1)), []);
+
+  function pushToast(message: string, action?: ToastState["action"], actionLabel = "Undo") {
+    toastId.current += 1;
+
+    const next: ToastState = {
+      id: toastId.current,
+      message,
+      durationMs: UNDO_TOAST_DURATION_MS,
+    };
+
+    if (action) {
+      next.action = action;
+      next.actionLabel = actionLabel;
     }
 
-    setSavingEdit(true);
-    setEditTitleError(null);
-    setError(null);
-
-    // Optimistic update
-    setTasks((previousTasks) =>
-      previousTasks.map((task) =>
-        task.id === id ? { ...task, title } : task,
-      ),
-    );
-
-    try {
-      const response = await fetch(`/api/tasks/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title }),
-      });
-
-      if (!response.ok) {
-        throw new Error(
-          await getApiErrorMessage(response, "Could not update task."),
-        );
-      }
-
-      setEditingId(null);
-      router.refresh();
-    } catch (err) {
-      if (currentTask) {
-        setTasks((previousTasks) =>
-          previousTasks.map((task) =>
-            task.id === id ? currentTask : task,
-          ),
-        );
-      }
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-      router.refresh();
-    } finally {
-      setSavingEdit(false);
-    }
+    setToast(next);
   }
+
+  const preview = useMemo(() => {
+    const text = draft.trim();
+
+    if (!text) {
+      return null;
+    }
+
+    const parsed = parseDueText(text, { now, timeZone });
+
+    if (!parsed.dueAt) {
+      return null;
+    }
+
+    const description = describeDue(parsed.dueAt, { now, timeZone });
+
+    return {
+      title: parsed.title,
+      label: description?.text ?? "",
+      tone: description?.tone ?? "future",
+    };
+  }, [draft, now, timeZone]);
 
   async function addTask(event: FormEvent) {
     event.preventDefault();
 
-    if (busy) {
+    if (adding || busy) {
       return;
     }
 
-    const parsedTitle = taskTitleSchema.safeParse(title);
+    const result = createTaskSchema.safeParse({ draft: draft.trim() });
 
-    if (!parsedTitle.success) {
-      setTitleError(getTitleError(title));
+    if (!result.success) {
+      setDraftError(result.error.issues[0]?.message ?? "Enter a valid task.");
       return;
     }
 
-    setBusy(true);
-    setTitleError(null);
+    setAdding(true);
+    setDraftError(null);
     setError(null);
+    begin();
 
     try {
-      const response = await fetch("/api/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: parsedTitle.data }),
-      });
+      const created = await jsonRequest<TaskDto>(
+        "/api/tasks",
+        "POST",
+        { draft: draft.trim() },
+        "Could not add task.",
+      );
 
-      if (!response.ok) {
-        throw new Error(
-          await getApiErrorMessage(response, "Could not add task."),
-        );
-      }
-
-      const created: Task = await response.json();
-      setTasks((previousTasks) => [created, ...previousTasks]);
-      setTitle("");
+      setDraft("");
+      setTasks((previous) =>
+        previous.some((task) => task.id === created.id)
+          ? previous
+          : [created, ...previous],
+      );
       router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } catch (caught) {
+      setDraftError(messageFrom(caught, "Could not add task."));
     } finally {
-      setBusy(false);
+      setAdding(false);
+      end();
     }
   }
 
-  async function toggle(id: number, completed: boolean) {
-    const previousTask = tasks.find((task) => task.id === id);
+  async function patchTask(
+    id: number,
+    body: Record<string, unknown>,
+    optimistic: Partial<TaskDto>,
+    fallback: string,
+  ) {
+    const snapshot = tasks;
 
-    setTasks((previousTasks) =>
-      previousTasks.map((task) =>
-        task.id === id ? { ...task, completed } : task,
-      ),
+    setTasks((previous) =>
+      previous.map((task) => (task.id === id ? { ...task, ...optimistic } : task)),
     );
     setError(null);
+    begin();
 
     try {
-      const response = await fetch(`/api/tasks/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ completed }),
+      const updated = await jsonRequest<TaskDto>(
+        `/api/tasks/${id}`,
+        "PATCH",
+        body,
+        fallback,
+      );
+
+      router.refresh();
+
+      return updated;
+    } catch (caught) {
+      setTasks(snapshot);
+      setError(messageFrom(caught, fallback));
+
+      return null;
+    } finally {
+      end();
+    }
+  }
+
+  async function toggle(task: TaskDto) {
+    const completed = !task.completed;
+
+    const updated = await patchTask(
+      task.id,
+      { completed },
+      { completed },
+      "Could not update task.",
+    );
+
+    if (updated && updated.completed) {
+      pushToast(`“${updated.title}” is done.`, () => {
+        void patchTask(updated.id, { completed: false }, { completed: false }, "Could not update task.");
       });
-
-      if (!response.ok) {
-        throw new Error(
-          await getApiErrorMessage(response, "Could not update task."),
-        );
-      }
-
-      router.refresh();
-    } catch (err) {
-      if (previousTask) {
-        setTasks((previousTasks) =>
-          previousTasks.map((task) =>
-            task.id === id ? previousTask : task,
-          ),
-        );
-      }
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-      router.refresh();
     }
   }
 
-  async function remove(id: number) {
-    const deletedTaskIndex = tasks.findIndex((task) => task.id === id);
-    const deletedTask = tasks[deletedTaskIndex];
-
-    setTasks((previousTasks) =>
-      previousTasks.filter((task) => task.id !== id),
+  async function saveEdit(id: number, patch: TaskPatch) {
+    const updated = await patchTask(
+      id,
+      {
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
+        ...(patch.dueAt !== undefined ? { dueAt: patch.dueAt } : {}),
+      },
+      {
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
+        ...(patch.dueAt !== undefined
+          ? { dueAt: patch.dueAt ? new Date(patch.dueAt) : null }
+          : {}),
+      },
+      "Could not update task.",
     );
+
+    if (!updated) {
+      return false;
+    }
+
+    setTasks((previous) =>
+      previous.map((task) => (task.id === id ? updated : task)),
+    );
+
+    return true;
+  }
+
+  async function moveToTrash(task: TaskDto) {
+    const snapshot = tasks;
+
+    setTasks((previous) => previous.filter((entry) => entry.id !== task.id));
     setError(null);
+    begin();
 
     try {
-      const response = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
-
-      if (!response.ok) {
-        throw new Error(
-          await getApiErrorMessage(response, "Could not delete task."),
-        );
-      }
-
+      await deleteRequest(`/api/tasks/${task.id}`, "Could not move task to trash.");
+      pushToast(`“${task.title}” moved to Trash.`, () => restore(task.id));
       router.refresh();
-    } catch (err) {
-      if (deletedTask) {
-        setTasks((previousTasks) => {
-          if (previousTasks.some((task) => task.id === id)) {
-            return previousTasks;
-          }
-
-          const restoredTasks = [...previousTasks];
-          restoredTasks.splice(deletedTaskIndex, 0, deletedTask);
-          return restoredTasks;
-        });
-      }
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-      router.refresh();
+    } catch (caught) {
+      setTasks(snapshot);
+      setError(messageFrom(caught, "Could not move task to trash."));
+    } finally {
+      end();
     }
   }
 
-  const remaining = tasks.filter((t) => !t.completed).length;
+  async function restore(taskId: number) {
+    setError(null);
+    begin();
+
+    try {
+      const restored = await jsonRequest<TaskDto>(
+        `/api/tasks/${taskId}/restore`,
+        "POST",
+        {},
+        "Could not restore task.",
+      );
+
+      setToast(null);
+      setTasks((previous) =>
+        previous.some((task) => task.id === restored.id)
+          ? previous
+          : [restored, ...previous],
+      );
+      router.refresh();
+    } catch (caught) {
+      setError(messageFrom(caught, "Could not restore task."));
+    } finally {
+      end();
+    }
+  }
+
+  async function deleteForever(task: TaskDto) {
+    const snapshot = tasks;
+
+    setTasks((previous) => previous.filter((entry) => entry.id !== task.id));
+    setError(null);
+    begin();
+
+    try {
+      await deleteRequest(
+        `/api/tasks/${task.id}?permanent=1`,
+        "Could not delete task.",
+      );
+      pushToast(`“${task.title}” deleted for good.`);
+      router.refresh();
+    } catch (caught) {
+      setTasks(snapshot);
+      setError(messageFrom(caught, "Could not delete task."));
+    } finally {
+      end();
+    }
+  }
+
+  function dismissToast() {
+    setToast(null);
+    setToastPaused(false);
+  }
+
+  const remaining = tasks.filter((task) => !task.completed).length;
   const done = tasks.length - remaining;
+  const overdue = tasks.filter((task) => {
+    const description = describeDue(task.dueAt, { now, timeZone, completed: task.completed });
+
+    return description?.tone === "overdue";
+  }).length;
+  const filtering = filters.q !== "" || filters.filter !== "all" || filters.trash;
+  const hrefFor = (next: TaskListFilters) => `/${buildTaskListQuery(next)}`;
+  const overdueHref = hrefFor({ ...filters, filter: "overdue", trash: false });
 
   return (
-    <div className="w-full max-w-2xl mx-auto space-y-6">
-      {/* New task form */}
-      <div className="w-full space-y-1.5">
-        <form
-          noValidate
-          onSubmit={addTask}
-          className={`group relative flex items-center gap-2 rounded-2xl border bg-white/80 p-1.5 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] backdrop-blur-md transition-all focus-within:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.08)] ${
-            titleError
-              ? "border-rose-300 focus-within:border-rose-400"
-              : "border-slate-200/80 focus-within:border-slate-400"
-          }`}
-        >
-          <div className="pointer-events-none pl-3 text-slate-400">
-            <svg
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth="2.5"
+    <div className="mx-auto w-full max-w-2xl space-y-5">
+      {!filters.trash ? (
+        <div className="w-full space-y-1.5">
+          <form
+            noValidate
+            onSubmit={addTask}
+            className={`group relative flex items-center gap-2 rounded-2xl border bg-surface/80 p-1.5 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] backdrop-blur-md transition-all focus-within:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.08)] ${
+              draftError
+                ? "border-danger focus-within:border-danger"
+                : "border-line focus-within:border-accent"
+            }`}
+          >
+            <div className="pointer-events-none pl-3 text-faint">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+            </div>
+            <label className="sr-only" htmlFor="new-task-title">
+              Task title
+            </label>
+            <input
+              id="new-task-title"
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                if (draftError) {
+                  setDraftError(null);
+                }
+              }}
+              maxLength={160}
+              aria-invalid={Boolean(draftError)}
+              aria-describedby={draftError ? "new-task-title-error" : "new-task-title-hint"}
+              placeholder="What needs to be done?  Try: email the client friday 9am"
+              className="flex-1 bg-transparent px-2 py-2 text-sm text-ink placeholder:text-faint focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={adding || busy}
+              className="inline-flex items-center justify-center rounded-xl bg-ink px-4 py-2 text-xs font-medium tracking-wide text-[var(--canvas)] transition-all hover:opacity-90 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 4v16m8-8H4"
-              />
-            </svg>
-          </div>
-          <label className="sr-only" htmlFor="new-task-title">
-            Task title
-          </label>
-          <input
-            id="new-task-title"
-            value={title}
-            onChange={(event) => {
-              const nextTitle = event.target.value;
-              setTitle(nextTitle);
+              {adding ? "Adding…" : "Add task"}
+            </button>
+          </form>
 
-              if (titleError) {
-                setTitleError(getTitleError(nextTitle));
-              }
-            }}
-            onBlur={() => {
-              if (title) {
-                setTitleError(getTitleError(title));
-              }
-            }}
-            maxLength={TASK_TITLE_MAX_LENGTH}
-            aria-invalid={Boolean(titleError)}
-            aria-describedby={titleError ? "new-task-title-error" : undefined}
-            placeholder="What needs to be done?"
-            className="flex-1 bg-transparent px-2 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={busy}
-            className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-xs font-medium tracking-wide text-white transition-all hover:bg-slate-800 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
-          >
-            {busy ? "Adding…" : "Add task"}
-          </button>
-        </form>
-
-        {titleError && (
-          <p
-            id="new-task-title-error"
-            role="alert"
-            className="px-2 text-xs font-medium text-rose-600"
-          >
-            {titleError}
+          {draftError ? (
+            <p id="new-task-title-error" role="alert" className="px-2 text-xs font-medium text-danger">
+              {draftError}
+            </p>
+          ) : (
+            <p id="new-task-title-hint" className="px-2 text-[11px] text-faint">
+              {preview ? (
+                <span className="inline-flex flex-wrap items-center gap-1.5">
+                  <span className="font-medium text-ink">“{preview.title}”</span>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 font-medium ${
+                      preview.tone === "overdue"
+                        ? "border-danger/30 bg-danger-soft text-danger"
+                        : preview.tone === "today"
+                          ? "border-warning/30 bg-warning-soft text-warning"
+                          : "border-accent/25 bg-accent-soft text-accent"
+                    }`}
+                  >
+                    {preview.label}
+                  </span>
+                  <span>— due dates are parsed on the server too, so this is only a preview.</span>
+                </span>
+              ) : (
+                <span>
+                  Dates work inline: <code className="font-mono text-[10px]">tomorrow</code>,{" "}
+                  <code className="font-mono text-[10px]">fri 9am</code>,{" "}
+                  <code className="font-mono text-[10px]">in 3d</code>,{" "}
+                  <code className="font-mono text-[10px]">20/9</code>.
+                </span>
+              )}
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-danger/25 bg-danger-soft px-4 py-3 text-xs text-danger">
+          <p className="font-semibold">Trash</p>
+          <p className="mt-0.5 text-danger/80">
+            Deleted tasks stay here for 30 days, then are removed automatically. Restore
+            one, or delete it for good.
           </p>
-        )}
-      </div>
-
-      {error && (
-        <div
-          role="alert"
-          className="rounded-xl border border-rose-100 bg-rose-50/70 px-4 py-2.5 text-xs font-medium text-rose-600 backdrop-blur-sm"
-        >
-          {error}
         </div>
       )}
 
-      {/* Visual Progress & Metrics */}
-      <div className="space-y-2 px-1">
-        <div className="flex items-center justify-between text-xs tracking-tight">
-          <span className="font-medium text-slate-500">
-            <strong className="font-semibold text-slate-900">
-              {remaining}
-            </strong>{" "}
-            remaining
-          </span>
-          <span className="font-medium text-slate-400">
-            {tasks.length === 0
-              ? "0%"
-              : `${Math.round((done / tasks.length) * 100)}% done`}
-          </span>
-        </div>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-          <div
-            className="h-full bg-slate-900 transition-all duration-500 ease-out"
-            style={{
-              width: `${tasks.length ? (done / tasks.length) * 100 : 0}%`,
-            }}
-          />
-        </div>
-      </div>
+      <TaskFilters filters={filters} trashCount={trashCount} />
 
-      {/* Tasks List */}
-      <ul className="space-y-2">
-        {tasks.length === 0 && (
-          <li className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 py-12 text-center text-xs text-slate-400">
-            <span>No tasks scheduled</span>
-            <span className="text-[11px] text-slate-300">
-              Type above and press enter to add
+      {error ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-danger/25 bg-danger-soft px-4 py-2.5 text-xs font-medium text-danger backdrop-blur-sm"
+        >
+          {error}
+        </div>
+      ) : null}
+
+      {filtering ? (
+        <div className="flex items-center justify-between gap-2 px-1 text-[11px]">
+          <span className="font-medium text-muted">
+            {tasks.length} {tasks.length === 1 ? "result" : "results"}
+            {filters.trash ? " in trash" : ""}
+            {filters.q ? ` for “${filters.q}”` : ""}
+          </span>
+          <Link
+            href="/"
+            className="rounded-lg px-2 py-1 font-medium text-accent transition hover:bg-accent-soft"
+          >
+            Clear filters
+          </Link>
+        </div>
+      ) : (
+        <div className="space-y-2 px-1">
+          <div className="flex items-center justify-between text-xs tracking-tight">
+            <span className="font-medium text-muted">
+              <strong className="font-semibold text-ink">{remaining}</strong> remaining
+            </span>
+            <span className="flex items-center gap-2 font-medium text-faint">
+              {overdue > 0 && filters.filter !== "overdue" ? (
+                <Link href={overdueHref}
+                  className="rounded-full border border-danger/30 bg-danger-soft px-2 py-0.5 text-[11px] font-medium text-danger transition hover:border-danger"
+                >
+                  {overdue} overdue
+                </Link>
+              ) : null}
+              <span>
+                {tasks.length === 0
+                  ? "0%"
+                  : `${Math.round((done / tasks.length) * 100)}% done`}
+              </span>
+            </span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-sunken">
+            <div
+              className="h-full bg-accent transition-all duration-500 ease-out"
+              style={{ width: `${tasks.length ? (done / tasks.length) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      <ul className="space-y-[var(--list-gap)]">
+        {tasks.length === 0 ? (
+          <li className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line py-12 text-center text-xs text-faint">
+            <span>
+              {filters.trash
+                ? "Trash is empty"
+                : filters.q
+                  ? "No tasks match that search"
+                  : filters.filter !== "all"
+                    ? `Nothing in ${filters.filter}`
+                    : "No tasks scheduled"}
+            </span>
+            <span className="mt-1 text-[11px] text-faint/80">
+              {filters.trash
+                ? "Deleted tasks show up here for 30 days."
+                : filtering
+                  ? "Clear the filters above to see everything."
+                  : "Type above and press enter to add."}
             </span>
           </li>
-        )}
-        {tasks.map((task) => {
-          const isEditing = editingId === task.id;
+        ) : null}
 
-          return (
-            <li
-              key={task.id}
-              className={`group flex items-center gap-3.5 rounded-2xl border bg-white/70 px-4 py-3 shadow-[0_1px_3px_rgba(0,0,0,0.02)] backdrop-blur-sm transition-all ${
-                isEditing
-                  ? "border-slate-400 ring-2 ring-slate-100"
-                  : "border-slate-100 hover:border-slate-200 hover:shadow-[0_4px_12px_rgba(0,0,0,0.04)]"
-              }`}
-            >
-              {/* Checkbox */}
-              <button
-                onClick={() => toggle(task.id, !task.completed)}
-                disabled={isEditing}
-                aria-label={
-                  task.completed ? "Mark as not done" : "Mark as done"
-                }
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-lg border transition-all ${
-                  task.completed
-                    ? "border-slate-900 bg-slate-900 text-white shadow-sm"
-                    : "border-slate-200 bg-white hover:border-slate-400"
-                } ${isEditing ? "opacity-30 pointer-events-none" : ""}`}
-              >
-                {task.completed && (
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="3"
-                    className="h-3 w-3"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                )}
-              </button>
-
-              {/* Title OR Inline Edit Input */}
-              {isEditing ? (
-                <div
-                  className={`relative flex flex-1 items-center gap-1.5 ${
-                    editTitleError ? "pb-5" : ""
-                  }`}
-                >
-                  <label className="sr-only" htmlFor={`task-title-${task.id}`}>
-                    Task title
-                  </label>
-                  <input
-                    id={`task-title-${task.id}`}
-                    ref={editInputRef}
-                    value={editTitle}
-                    onChange={(event) => {
-                      const nextTitle = event.target.value;
-                      setEditTitle(nextTitle);
-
-                      if (editTitleError) {
-                        setEditTitleError(getTitleError(nextTitle));
-                      }
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") saveEdit(task.id);
-                      if (event.key === "Escape") cancelEditing();
-                    }}
-                    maxLength={TASK_TITLE_MAX_LENGTH}
-                    aria-invalid={Boolean(editTitleError)}
-                    aria-describedby={
-                      editTitleError ? `task-title-error-${task.id}` : undefined
-                    }
-                    disabled={savingEdit}
-                    className={`flex-1 rounded-lg border bg-white px-2.5 py-1 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none ${
-                      editTitleError
-                        ? "border-rose-300 focus:border-rose-400"
-                        : "border-slate-200 focus:border-slate-400"
-                    }`}
-                  />
-                  {/* Save Edit Button */}
-                  <button
-                    onClick={() => saveEdit(task.id)}
-                    disabled={savingEdit}
-                    aria-label="Save task"
-                    className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50 active:scale-95 disabled:opacity-40"
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      className="h-4 w-4"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                  </button>
-                  {/* Cancel Edit Button */}
-                  <button
-                    onClick={cancelEditing}
-                    disabled={savingEdit}
-                    aria-label="Cancel editing"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 active:scale-95"
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      className="h-4 w-4"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M6 18L18 6M6 6l12 12"
-                      />
-                    </svg>
-                  </button>
-                  {editTitleError && (
-                    <p
-                      id={`task-title-error-${task.id}`}
-                      role="alert"
-                      className="absolute bottom-0 left-0 text-[11px] font-medium text-rose-600"
-                    >
-                      {editTitleError}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <span
-                    onDoubleClick={() => startEditing(task)}
-                    className={`flex-1 text-sm transition-all ${
-                      task.completed
-                        ? "text-slate-400 line-through opacity-60"
-                        : "text-slate-700"
-                    }`}
-                  >
-                    {task.title}
-                  </span>
-
-                  {/* Date Meta */}
-                  <span className="hidden text-[11px] font-medium tracking-tight text-slate-400 tabular-nums sm:block">
-                    {new Date(task.createdAt).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </span>
-
-                  {/* Action Group */}
-                  <div className="flex items-center gap-0.5 opacity-0 transition-all focus-within:opacity-100 group-hover:opacity-100">
-                    {/* Edit Action Button */}
-
-                    <button
-                      onClick={() => router.push(`/tasks/${task.id}`)}
-                      aria-label="View task details"
-                      title="View details"
-                      className="rounded-lg p-1.5 text-slate-400 transition-all hover:bg-blue-50 hover:text-blue-600 active:scale-95"
-                    >
-                      {/* Eye / open icon */}
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        className="h-3.5 w-3.5"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                        />
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                        />
-                      </svg>
-                    </button>
-
-                    <button
-                      onClick={() => startEditing(task)}
-                      aria-label="Edit task"
-                      className="rounded-lg p-1.5 text-slate-400 transition-all hover:bg-slate-100 hover:text-slate-700"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        className="h-3.5 w-3.5"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
-                        />
-                      </svg>
-                    </button>
-
-                    {/* Delete Action Button */}
-                    <button
-                      onClick={() => remove(task.id)}
-                      aria-label="Delete task"
-                      className="rounded-lg p-1.5 text-slate-300 transition-all hover:bg-rose-50 hover:text-rose-500"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        className="h-3.5 w-3.5"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                </>
-              )}
-            </li>
-          );
-        })}
+        {tasks.map((task) => (
+          <TaskItem
+            // Keyed by edit mode on purpose: mounting a fresh row initialises the
+            // editor from the server value, so there is nothing to sync by effect.
+            key={`${task.id}:${editingId === task.id ? "edit" : "view"}`}
+            task={task}
+            now={now}
+            timeZone={timeZone}
+            inTrash={filters.trash}
+            isEditing={editingId === task.id}
+            saving={savingId === task.id}
+            onStartEdit={() => setEditor({ taskId: task.id, viewKey })}
+            onCancelEdit={() => setEditor(null)}
+            onSave={async (patch) => {
+              setSavingId(task.id);
+              try {
+                return await saveEdit(task.id, patch);
+              } finally {
+                setSavingId(null);
+              }
+            }}
+            onToggle={() => toggle(task)}
+            onDelete={() => moveToTrash(task)}
+            onRestore={() => restore(task.id)}
+            onPermanentDelete={() => deleteForever(task)}
+          />
+        ))}
       </ul>
+
+      <UndoToast
+        toast={toast}
+        onDismiss={dismissToast}
+        onPause={() => setToastPaused(true)}
+        onResume={() => setToastPaused(false)}
+      />
     </div>
   );
 }

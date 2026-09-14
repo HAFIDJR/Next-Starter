@@ -15,6 +15,13 @@
       "when": 1789201717703,
       "tag": "0001_unusual_agent_brand",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789208332095,
+      "tag": "0002_tier1_task_features",
+      "breakpoints": true
     }
   ]
 }

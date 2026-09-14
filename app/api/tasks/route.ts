@@ -2,31 +2,40 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   authenticationRequiredResponse,
+  inputRejectedResponse,
   malformedJsonResponse,
   readJsonBody,
   validationErrorResponse,
 } from "@/src/lib/api-errors";
+import { isInputRejectedError } from "@/src/lib/service-errors";
 import { getCurrentUser } from "@/src/features/auth/session";
-import {
-  createTaskForUser,
-  listTasksForUser,
-} from "@/src/features/tasks/service";
-import { createTaskSchema } from "@/src/features/tasks/validation";
+import { preferencesTimeZone, getPreferences } from "@/src/features/preferences/read";
+import { listTasksForUser, createTaskForUser } from "@/src/features/tasks/service";
+import { parseTaskListQuery, createTaskSchema } from "@/src/features/tasks/validation";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/tasks -> list all tasks
-export async function GET() {
+// GET /api/tasks -> list the caller's tasks, honouring ?q= &filter= &trash=
+export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
+
   if (!user) {
     return authenticationRequiredResponse();
   }
-  const tasks = await listTasksForUser(user.id);
 
+  const preferences = await getPreferences();
+  const filters = parseTaskListQuery(
+    Object.fromEntries(request.nextUrl.searchParams.entries()),
+  );
+  const tasks = await listTasksForUser(user.id, filters, {
+    timeZone: preferencesTimeZone(preferences),
+  });
+
+  // Same array shape the endpoint has always returned, so existing callers keep working.
   return NextResponse.json(tasks);
 }
 
-// POST /api/tasks -> create a task
+// POST /api/tasks -> create a task from a title or a natural-language draft
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
 
@@ -46,7 +55,19 @@ export async function POST(request: NextRequest) {
     return validationErrorResponse(result.error);
   }
 
-  const created = await createTaskForUser(user.id, result.data);
+  const preferences = await getPreferences();
 
-  return NextResponse.json(created, { status: 201 });
+  try {
+    const created = await createTaskForUser(user.id, result.data, {
+      timeZone: preferencesTimeZone(preferences),
+    });
+
+    return NextResponse.json(created, { status: 201 });
+  } catch (error) {
+    if (isInputRejectedError(error)) {
+      return inputRejectedResponse(error.message, error.field);
+    }
+
+    throw error;
+  }
 }
