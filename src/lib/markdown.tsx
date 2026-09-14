@@ -167,8 +167,8 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
 }
 
 const HEADING_STYLES: Record<number, string> = {
-  1: "text-sm font-semibold text-[var(--text)]",
-  2: "text-xs font-semibold uppercase tracking-wide text-[var(--text)]",
+  1: "text-sm font-semibold text-[var(--ink)]",
+  2: "text-xs font-semibold uppercase tracking-wide text-[var(--ink)]",
   3: "text-xs font-semibold uppercase tracking-wider text-[var(--muted)]",
 };
 
