@@ -83,8 +83,9 @@ callback in the delete handler, so cleanup never delays a response.
 | Method   | Path                        | Notes                                            |
 | -------- | --------------------------- | ------------------------------------------------ |
 | `GET`    | `/api/tasks`                | `?q=`, `?filter=all\|active\|completed\|today\|overdue`, `?trash=1` |
+| `GET`    | `/api/tasks/:id`            | live rows only — a trashed id is a 404                     |
 | `POST`   | `/api/tasks`                | `{ draft }` (parsed) or `{ title }`, plus `notes`, `dueAt`, `completed` |
-| `PATCH`  | `/api/tasks/:id`            | any subset of the above; `notes: ""` and `dueAt: null` clear fields |
+| `PATCH`  | `/api/tasks/:id`            | any subset of the above; `notes: ""` and `dueAt: null` clear fields; trashed rows are 404 |
 | `DELETE` | `/api/tasks/:id`            | soft delete; `?permanent=1` to remove the row     |
 | `POST`   | `/api/tasks/:id/restore`    | only succeeds for trashed rows                    |
 

@@ -15,6 +15,7 @@ import { getCurrentUser } from "@/src/features/auth/session";
 import { preferencesTimeZone, getPreferences } from "@/src/features/preferences/read";
 import {
   deleteTaskForUser,
+  getTaskForUser,
   permanentlyDeleteTaskForUser,
   purgeExpiredTrash,
   updateTaskForUser,
@@ -34,6 +35,33 @@ async function getTaskId({ params }: TaskRouteContext): Promise<number | null> {
   const { id } = await params;
 
   return parseTaskId(id);
+}
+
+/**
+ * A single task, for API symmetry with the collection route — the app itself reads
+ * the list and the server-rendered detail page. Live rows only: `?trash=1` on the
+ * collection is the one way to see trashed tasks, so a trashed id is a 404 here.
+ */
+export async function GET(_request: NextRequest, context: TaskRouteContext) {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    return authenticationRequiredResponse();
+  }
+
+  const taskId = await getTaskId(context);
+
+  if (!taskId) {
+    return badRequestResponse("Invalid task id.");
+  }
+
+  const task = await getTaskForUser(taskId, user.id);
+
+  if (!task) {
+    return notFoundResponse("Task not found.");
+  }
+
+  return NextResponse.json(task);
 }
 
 export async function PATCH(request: NextRequest, context: TaskRouteContext) {
