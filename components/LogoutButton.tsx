@@ -33,12 +33,12 @@ export default function LogoutButton({ email }: Props) {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="hidden max-w-40 truncate text-xs text-slate-500 sm:block">
+      <span className="hidden max-w-40 truncate text-xs text-muted sm:block">
         {email}
       </span>
       <button
         aria-label="Sign out"
-        className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
+        className="rounded-lg px-3 py-2 text-sm font-medium text-muted transition hover:bg-sunken hover:text-ink disabled:opacity-50"
         disabled={pending}
         onClick={logout}
         type="button"

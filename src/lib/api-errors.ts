@@ -46,3 +46,22 @@ export function validationErrorResponse(error: ZodError) {
     { status: 400 },
   );
 }
+
+/** Service-layer rejections (e.g. a draft whose parsed title is too long) → 400. */
+export function inputRejectedResponse(message: string, field = "form") {
+  return NextResponse.json(
+    {
+      error: message,
+      fieldErrors: { [field]: [message] },
+    },
+    { status: 400 },
+  );
+}
+
+export function notFoundResponse(message = "Not found.") {
+  return NextResponse.json({ error: message }, { status: 404 });
+}
+
+export function badRequestResponse(message: string) {
+  return NextResponse.json({ error: message }, { status: 400 });
+}

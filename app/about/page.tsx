@@ -19,12 +19,12 @@ const stack = [
 export default function AboutPage() {
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col px-4 py-12 sm:px-6">
-      <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
+      <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">
         About Taskly
       </h1>
-      <p className="mt-4 text-base leading-relaxed text-slate-600">
+      <p className="mt-4 text-base leading-relaxed text-muted">
         Taskly is a private task manager built with the{" "}
-        <span className="font-semibold text-slate-900">Next.js App Router</span>
+        <span className="font-semibold text-ink">Next.js App Router</span>
         . Each task is attached to its signed-in owner, and protected routes
         verify authorization before reading or changing task data.
       </p>
@@ -33,16 +33,16 @@ export default function AboutPage() {
         {stack.map((item) => (
           <div
             key={item.name}
-            className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+            className="rounded-2xl border border-line bg-surface p-5 shadow-sm"
           >
-            <h2 className="text-lg font-semibold text-slate-900">
+            <h2 className="text-lg font-semibold text-ink">
               {item.name}
             </h2>
-            <p className="mt-1 text-sm text-slate-600">{item.role}</p>
+            <p className="mt-1 text-sm text-muted">{item.role}</p>
           </div>
         ))}
       </div>
-      <p className="mt-8 rounded-2xl bg-indigo-50 p-4 text-sm text-indigo-700">
+      <p className="mt-8 rounded-2xl bg-accent-soft p-4 text-sm text-accent">
         ✨ Sign in to create and manage tasks that are visible only to your
         account.
       </p>

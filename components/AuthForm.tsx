@@ -110,14 +110,14 @@ export default function AuthForm({ mode, nextPath }:Props) {
 
   return (
     <main className="mx-auto flex min-h-[calc(100vh-65px)] w-full max-w-md items-center px-4 py-12 sm:px-6">
-      <section className="w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-        <p className="text-sm font-medium uppercase tracking-widest text-indigo-500">
+      <section className="w-full rounded-2xl border border-line bg-surface p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-medium uppercase tracking-widest text-accent">
           Taskly
         </p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">
+        <h1 className="mt-2 text-3xl font-bold tracking-tight text-ink">
           {isLogin ? "Welcome back" : "Create your account"}
         </h1>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
+        <p className="mt-2 text-sm leading-6 text-muted">
           {isLogin
             ? "Sign in to access your private task workspace."
             : "Create an account to keep your tasks private."}
@@ -126,7 +126,7 @@ export default function AuthForm({ mode, nextPath }:Props) {
         <form className="mt-7 space-y-5" noValidate onSubmit={submit}>
           <div>
             <label
-              className="mb-1.5 block text-sm font-medium text-slate-700"
+              className="mb-1.5 block text-sm font-medium text-ink"
               htmlFor="email"
             >
               Email address
@@ -142,15 +142,15 @@ export default function AuthForm({ mode, nextPath }:Props) {
               }}
               aria-describedby={errors.email ? "email-error" : undefined}
               aria-invalid={Boolean(errors.email)}
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-2 ${
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-faint focus:ring-2 ${
                 errors.email
-                  ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
-                  : "border-slate-200 focus:border-indigo-500 focus:ring-indigo-100"
+                  ? "border-danger/60 focus:border-danger focus:ring-danger/20"
+                  : "border-line focus:border-accent focus:ring-accent/20"
               }`}
               placeholder="you@example.com"
             />
             {errors.email && (
-              <p id="email-error" role="alert" className="mt-1.5 text-xs text-rose-600">
+              <p id="email-error" role="alert" className="mt-1.5 text-xs text-danger">
                 {errors.email}
               </p>
             )}
@@ -158,7 +158,7 @@ export default function AuthForm({ mode, nextPath }:Props) {
 
           <div>
             <label
-              className="mb-1.5 block text-sm font-medium text-slate-700"
+              className="mb-1.5 block text-sm font-medium text-ink"
               htmlFor="password"
             >
               Password
@@ -174,19 +174,19 @@ export default function AuthForm({ mode, nextPath }:Props) {
               }}
               aria-describedby={errors.password ? "password-error" : "password-help"}
               aria-invalid={Boolean(errors.password)}
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-2 ${
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-faint focus:ring-2 ${
                 errors.password
-                  ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
-                  : "border-slate-200 focus:border-indigo-500 focus:ring-indigo-100"
+                  ? "border-danger/60 focus:border-danger focus:ring-danger/20"
+                  : "border-line focus:border-accent focus:ring-accent/20"
               }`}
               placeholder="••••••••"
             />
             {errors.password ? (
-              <p id="password-error" role="alert" className="mt-1.5 text-xs text-rose-600">
+              <p id="password-error" role="alert" className="mt-1.5 text-xs text-danger">
                 {errors.password}
               </p>
             ) : (
-              <p id="password-help" className="mt-1.5 text-xs text-slate-500">
+              <p id="password-help" className="mt-1.5 text-xs text-muted">
                 Use at least 8 characters, including a letter and a number.
               </p>
             )}
@@ -195,14 +195,14 @@ export default function AuthForm({ mode, nextPath }:Props) {
           {formError && (
             <p
               role="alert"
-              className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-2.5 text-sm text-rose-700"
+              className="rounded-xl border border-danger/25 bg-danger-soft px-3 py-2.5 text-sm text-danger"
             >
               {formError}
             </p>
           )}
 
           <button
-            className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-50"
+            className="w-full rounded-xl bg-ink px-4 py-2.5 text-sm font-semibold text-[var(--canvas)] transition hover:opacity-90 active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50"
             disabled={pending}
             type="submit"
           >
@@ -216,10 +216,10 @@ export default function AuthForm({ mode, nextPath }:Props) {
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-slate-600">
+        <p className="mt-6 text-center text-sm text-muted">
           {isLogin ? "New to Taskly?" : "Already have an account?"}{" "}
           <Link
-            className="font-semibold text-indigo-600 hover:text-indigo-500"
+            className="font-semibold text-accent hover:text-accent"
             href={alternateHref}
           >
             {isLogin ? "Create an account" : "Sign in"}

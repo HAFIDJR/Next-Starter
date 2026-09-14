@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:pglite": "node scripts/prepare-pglite.mjs && DB_DRIVER=pglite next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:prepare:pglite": "node scripts/prepare-pglite.mjs"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
@@ -17,6 +19,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.23.1",

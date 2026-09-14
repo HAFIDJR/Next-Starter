@@ -45,12 +45,26 @@ export const tasks = pgTable(
       onDelete: "cascade",
     }),
     title: text("title").notNull(),
+    notes: text("notes"),
+    dueAt: timestamp("due_at", { withTimezone: true }),
     completed: boolean("completed").notNull().default(false),
+    // Soft delete: rows in the trash keep their id so they can be restored.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // Bumped by drizzle on every write; used as a cheap "is this stale?" signature
+    // by the client to resync optimistic state after a refresh.
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
   },
-  (table) => [index("task_user_id_created_at_idx").on(table.userId, table.createdAt)],
+  (table) => [
+    index("task_user_id_created_at_idx").on(table.userId, table.createdAt),
+    index("task_user_id_deleted_at_idx").on(table.userId, table.deletedAt),
+    index("task_user_id_due_at_idx").on(table.userId, table.dueAt),
+  ],
 );
 
 export type User = typeof users.$inferSelect;
