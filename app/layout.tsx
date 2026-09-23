@@ -1,14 +1,29 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
+
 import "./globals.css";
 import LogoutButton from "@/components/LogoutButton";
+import PreferencesControls from "@/components/PrefencesControls";
 import { getCurrentUser } from "@/src/features/auth/session";
+import {
+  documentClassForPreferences,
+  documentDataAttributesForPreferences,
+  getPreferences,
+} from "@/src/features/preferences/read";
+import { PREFERENCES_SCRIPT } from "@/src/features/preferences/script";
 
 export const metadata: Metadata = {
   title: "Tasks · Next.js App Router",
   description:
     "A private task manager built with the Next.js App Router, Drizzle, and PostgreSQL.",
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f1f5f9" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b1220" },
+  ],
 };
 
 const navLinks = [
@@ -21,17 +36,29 @@ export default async function RootLayout({
 }: {
   children: ReactNode;
 }) {
-  const user = await getCurrentUser();
+  const [user, preferences] = await Promise.all([
+    getCurrentUser(),
+    getPreferences(),
+  ]);
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-slate-100 text-slate-900 antialiased">
-        <header className="border-b border-slate-200 bg-white/80 backdrop-blur">
-          <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
+    <html
+      lang="en"
+      className={documentClassForPreferences(preferences)}
+      {...documentDataAttributesForPreferences(preferences)}
+      // The pre-paint script owns these two attributes as well.
+      suppressHydrationWarning
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: PREFERENCES_SCRIPT }} />
+      </head>
+      <body className="min-h-screen bg-canvas text-ink antialiased">
+        <header className="border-b border-line bg-surface/80 backdrop-blur">
+          <nav className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-4 sm:px-6">
             <Link
               href="/"
-              className="flex items-center gap-2 text-sm font-semibold text-slate-900"
+              className="flex items-center gap-2 text-sm font-semibold text-ink"
             >
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-base text-white">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent text-base text-accent-contrast">
                 ✓
               </span>
               Taskly
@@ -41,18 +68,20 @@ export default async function RootLayout({
                 <Link
                   key={link.href}
                   href={link.href}
-                  className="rounded-lg px-3 py-2 font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                  className="rounded-lg px-3 py-2 font-medium text-muted transition hover:bg-sunken hover:text-ink"
                 >
                   {link.label}
                 </Link>
               ))}
+
+              <PreferencesControls initial={preferences} />
 
               {user ? (
                 <LogoutButton email={user.email} />
               ) : (
                 <Link
                   href="/login"
-                  className="rounded-lg px-3 py-2 font-medium text-indigo-600 transition hover:bg-indigo-50 hover:text-indigo-700"
+                  className="rounded-lg px-3 py-2 font-medium text-accent transition hover:bg-accent-soft"
                 >
                   Sign in
                 </Link>

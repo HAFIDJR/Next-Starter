@@ -9,7 +9,6 @@ import { sessions, users } from "@/src/db/schema";
 import { hashPassword, verifyPassword } from "./password";
 import type { AuthenticatedUser } from "./type";
 import type { CredentialsInput } from "./validation";
-import { email } from "zod";
 
 const SESSION_LIFETIME_MS = 1000 * 60 * 60 * 24 * 7;
 
