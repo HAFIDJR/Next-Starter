@@ -1,0 +1,3 @@
+export const TRASH_RETENTION_DAYS = 30;
+export const TASK_SEARCH_DEBOUNCE_MS = 300;
+export const UNDO_TOAST_DURATION_MS = 8000;

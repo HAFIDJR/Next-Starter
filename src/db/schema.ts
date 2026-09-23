@@ -36,7 +36,6 @@ export const sessions = pgTable(
   ],
 );
 
-
 export const tasks = pgTable(
   "task",
   {
@@ -45,12 +44,23 @@ export const tasks = pgTable(
       onDelete: "cascade",
     }),
     title: text("title").notNull(),
+    notes: text("notes"),
+    dueAt: timestamp("due_at", { withTimezone: true }),
     completed: boolean("completed").notNull().default(false),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
   },
-  (table) => [index("task_user_id_created_at_idx").on(table.userId, table.createdAt)],
+  (table) => [
+    index("task_user_id_created_at_idx").on(table.userId, table.createdAt),
+    index("task_user_id_deleted_at_idx").on(table.userId, table.deletedAt),
+    index("task_user_id_due_at_idx").on(table.userId, table.dueAt),
+  ],
 );
 
 export type User = typeof users.$inferSelect;

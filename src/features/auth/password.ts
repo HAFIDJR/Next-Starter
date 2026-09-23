@@ -1,7 +1,6 @@
 import "server-only";
 
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
-import { error } from "node:console";
 
 
 const KEY_LENGTH = 64;

@@ -29,7 +29,7 @@ function getSafeNextPath(nextPath?: string): string {
   return nextPath;
 }
 
-export default function AuthForm({ mode, nextPath }:Props) {
+export default function AuthForm({ mode, nextPath }: Props) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -110,14 +110,14 @@ export default function AuthForm({ mode, nextPath }:Props) {
 
   return (
     <main className="mx-auto flex min-h-[calc(100vh-65px)] w-full max-w-md items-center px-4 py-12 sm:px-6">
-      <section className="w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-        <p className="text-sm font-medium uppercase tracking-widest text-indigo-500">
+      <section className="w-full rounded-2xl border border-line bg-surface p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-medium uppercase tracking-widest text-accent">
           Taskly
         </p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">
+        <h1 className="mt-2 text-3xl font-bold tracking-tight text-ink">
           {isLogin ? "Welcome back" : "Create your account"}
         </h1>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
+        <p className="mt-2 text-sm leading-6 text-muted">
           {isLogin
             ? "Sign in to access your private task workspace."
             : "Create an account to keep your tasks private."}
@@ -144,13 +144,17 @@ export default function AuthForm({ mode, nextPath }:Props) {
               aria-invalid={Boolean(errors.email)}
               className={`w-full rounded-xl border px-3 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-2 ${
                 errors.email
-                  ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
-                  : "border-slate-200 focus:border-indigo-500 focus:ring-indigo-100"
+                  ? "border-danger/60 focus:border-rose-400 focus:ring-rose-100"
+                  : "border-line focus:border-accent focus:ring-accent/20"
               }`}
               placeholder="you@example.com"
             />
             {errors.email && (
-              <p id="email-error" role="alert" className="mt-1.5 text-xs text-rose-600">
+              <p
+                id="email-error"
+                role="alert"
+                className="mt-1.5 text-xs text-rose-600"
+              >
                 {errors.email}
               </p>
             )}
@@ -158,7 +162,7 @@ export default function AuthForm({ mode, nextPath }:Props) {
 
           <div>
             <label
-              className="mb-1.5 block text-sm font-medium text-slate-700"
+              className="mb-1.5 block text-sm font-medium text-ink"
               htmlFor="password"
             >
               Password
@@ -172,7 +176,9 @@ export default function AuthForm({ mode, nextPath }:Props) {
                 setPassword(event.target.value);
                 clearError("password");
               }}
-              aria-describedby={errors.password ? "password-error" : "password-help"}
+              aria-describedby={
+                errors.password ? "password-error" : "password-help"
+              }
               aria-invalid={Boolean(errors.password)}
               className={`w-full rounded-xl border px-3 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-2 ${
                 errors.password
@@ -182,7 +188,11 @@ export default function AuthForm({ mode, nextPath }:Props) {
               placeholder="••••••••"
             />
             {errors.password ? (
-              <p id="password-error" role="alert" className="mt-1.5 text-xs text-rose-600">
+              <p
+                id="password-error"
+                role="alert"
+                className="mt-1.5 text-xs text-rose-600"
+              >
                 {errors.password}
               </p>
             ) : (

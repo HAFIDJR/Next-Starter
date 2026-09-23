@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { deleteRequest, jsonRequest } from "@/src/lib/api-client";
 import type { TaskDto } from "@/src/features/tasks/types";
 
 export default function TaskDetailActions({ task }: { task: TaskDto }) {
@@ -14,13 +15,13 @@ export default function TaskDetailActions({ task }: { task: TaskDto }) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/tasks/${task.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ completed: !task.completed }),
-      });
-      if (!res.ok) throw new Error("Could not update task.");
-      router.refresh(); // re-runs the Server Component with fresh data
+      await jsonRequest<TaskDto>(
+        `/api/tasks/${task.id}`,
+        "PATCH",
+        { completed: !task.completed },
+        "Could not update task.",
+      );
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -28,13 +29,17 @@ export default function TaskDetailActions({ task }: { task: TaskDto }) {
     }
   }
 
-  async function remove() {
-    if (!confirm("Delete this task?")) return;
+  async function moveToTrash() {
+    if (!confirm("Move this task to the trash?")) return;
+
     setBusy(true);
     setError(null);
+
     try {
-      const res = await fetch(`/api/tasks/${task.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Could not delete task.");
+      await deleteRequest(
+        `/api/tasks/${task.id}`,
+        "Could not move task to trash.",
+      );
       router.push("/");
       router.refresh();
     } catch (err) {
@@ -46,31 +51,31 @@ export default function TaskDetailActions({ task }: { task: TaskDto }) {
   return (
     <div className="space-y-3">
       {error && (
-        <div className="rounded-xl border border-rose-100 bg-rose-50/70 px-4 py-2.5 text-xs font-medium text-rose-600">
+        <div className="rounded-xl border border-danger/25 bg-danger-soft px-4 py-2.5 text-xs font-medium text-danger">
           {error}
         </div>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Link
           href="/"
-          className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          className="rounded-xl border border-line px-4 py-2 text-xs font-medium text-muted transition hover:bg-sunken hover:text-ink"
         >
           ← Back
         </Link>
         <button
           onClick={toggle}
           disabled={busy}
-          className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-40"
+          className="rounded-xl bg-ink px-4 py-2 text-xs font-medium text-canvas transition hover:opacity-90 disabled:opacity-40"
         >
           {task.completed ? "Mark as pending" : "Mark as done"}
         </button>
         <button
-          onClick={remove}
+          onClick={moveToTrash}
           disabled={busy}
-          className="rounded-xl border border-rose-200 px-4 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-40"
+          className="ml-auto rounded-xl border border-danger/30 px-4 py-2 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-40"
         >
-          Delete
+          Move to Trash
         </button>
       </div>
     </div>
